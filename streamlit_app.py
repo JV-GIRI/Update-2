@@ -10,7 +10,7 @@ import json
 import tempfile
 
 st.set_page_config(layout="wide")
-st.title("🩺 PCG Analyzer with History + Patient Info")
+st.title("🩺 giri Analyzer with History + Patient Info")
 
 # Directories
 UPLOAD_FOLDER = "uploaded_audios"
