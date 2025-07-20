@@ -1,124 +1,130 @@
 import streamlit as st
 import numpy as np
-import scipy.io.wavfile as wav
 import matplotlib.pyplot as plt
 import librosa
 import librosa.display
-from io import BytesIO
 import soundfile as sf
-import os
-import json
-from datetime import datetime
+import io
+import scipy.signal
+from scipy.io.wavfile import write
+import tempfile
 
-st.set_page_config(page_title="PCG Realtime Waveform Analyzer", layout="wide")
-st.title("🔬 Real-time PCG Waveform & Noise Reduction")
+st.set_page_config(page_title="PCG Audio Feature Analysis", layout="wide")
 
-# Folder to save patient cases
-HISTORY_FOLDER = "patient_history"
-os.makedirs(HISTORY_FOLDER, exist_ok=True)
+def preprocess_audio(audio, sr, uid):
+    st.subheader("Preprocessing")
 
-# --- Sidebar for Patient Information ---
-with st.sidebar:
-    st.header("👤 Add Patient Information")
-    patient_name = st.text_input("Name")
-    patient_age = st.number_input("Age", min_value=0, step=1)
-    patient_gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-    record_button = st.button("💾 Save Patient Details")
+    # Noise reduction
+    st.write("🔉 Applying noise reduction...")
+    amplitude_factor = st.slider(
+        "Amplitude scaling",
+        0.1, 5.0, 1.0,
+        key=f"amplitude_slider_{uid}"
+    )
+    audio = audio * amplitude_factor
 
-    if record_button:
-        if not patient_name:
-            st.warning("Enter patient name.")
-        else:
-            patient_id = f"{patient_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            st.session_state['patient_id'] = patient_id
+    noise_threshold = st.slider(
+        "Noise threshold",
+        0.0, 0.1, 0.01,
+        step=0.005,
+        key=f"noise_threshold_slider_{uid}"
+    )
+    audio[np.abs(audio) < noise_threshold] = 0
 
-            data = {
-                "name": patient_name,
-                "age": patient_age,
-                "gender": patient_gender,
-                "timestamp": datetime.now().isoformat()
-            }
-            with open(f"{HISTORY_FOLDER}/{patient_id}.json", "w") as f:
-                json.dump(data, f)
-            st.success(f"✅ Saved: {patient_name}")
+    # Normalization
+    st.write("📏 Normalizing audio...")
+    audio = librosa.util.normalize(audio)
 
-# --- Upload or Record PCG Audio ---
-st.subheader("📤 Upload or Record PCG (.wav)")
-uploaded_file = st.file_uploader("Choose a PCG file", type=["wav"])
+    return audio
 
-# --- PCG Audio Analysis Workflow ---
-def analyze_audio(file_data, sr=None):
-    # Load and show original waveform
-    y, sr = librosa.load(file_data, sr=sr)
+def extract_features(audio, sr):
+    st.subheader("🎼 Feature Extraction")
 
-    st.subheader("🔈 Original PCG Waveform")
-    fig, ax = plt.subplots(figsize=(10, 3))
-    librosa.display.waveshow(y, sr=sr, ax=ax)
-    ax.set(title="Original PCG Waveform")
+    st.write("🔍 Extracting MFCCs...")
+    mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)
+    st.write("MFCC shape:", mfccs.shape)
+
+    st.write("🎵 Extracting Chroma Features...")
+    chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
+    st.write("Chroma shape:", chroma.shape)
+
+    st.write("⚡ Extracting Spectral Contrast...")
+    contrast = librosa.feature.spectral_contrast(y=audio, sr=sr)
+    st.write("Spectral Contrast shape:", contrast.shape)
+
+    return mfccs, chroma, contrast
+
+def plot_waveform(audio, sr):
+    st.subheader("📈 Waveform")
+    fig, ax = plt.subplots()
+    librosa.display.waveshow(audio, sr=sr, ax=ax)
     st.pyplot(fig)
 
-    # Controls
-    st.subheader("🎚 Waveform Controls")
-    duration = st.slider("Select duration (seconds)", 1, int(len(y)/sr), 5)
-    amplitude_factor = st.slider("Amplitude scaling", 0.1, 5.0, 1.0)
+def plot_spectrogram(audio, sr):
+    st.subheader("🎨 Spectrogram")
+    X = librosa.stft(audio)
+    Xdb = librosa.amplitude_to_db(abs(X))
+    fig, ax = plt.subplots()
+    img = librosa.display.specshow(Xdb, sr=sr, x_axis='time', y_axis='hz', ax=ax)
+    fig.colorbar(img, ax=ax, format="%+2.f dB")
+    st.pyplot(fig)
 
-    y_trimmed = y[:sr * duration] * amplitude_factor
+def plot_mfccs(mfccs):
+    st.subheader("🎚 MFCC")
+    fig, ax = plt.subplots()
+    img = librosa.display.specshow(mfccs, x_axis='time', ax=ax)
+    fig.colorbar(img, ax=ax)
+    st.pyplot(fig)
 
-    # Bandpass filter
-    from scipy.signal import butter, filtfilt
-    def bandpass_filter(data, sr, lowcut=25.0, highcut=400.0):
-        nyquist = 0.5 * sr
-        low = lowcut / nyquist
-        high = highcut / nyquist
-        b, a = butter(2, [low, high], btype='band')
-        return filtfilt(b, a, data)
+def save_processed_audio(audio, sr):
+    st.subheader("💾 Download Processed Audio")
+    buf = io.BytesIO()
+    sf.write(buf, audio, sr, format='WAV')
+    st.download_button(
+        label="Download Processed Audio",
+        data=buf,
+        file_name="processed_audio.wav",
+        mime="audio/wav",
+        key="download_button"
+    )
 
-    y_denoised = bandpass_filter(y_trimmed, sr)
+def analyze_audio(uploaded_file):
+    st.subheader("🔬 Audio Analysis")
 
-    st.subheader("🔇 Denoised Waveform (25–400 Hz Bandpass)")
-    fig2, ax2 = plt.subplots(figsize=(10, 3))
-    librosa.display.waveshow(y_denoised, sr=sr, ax=ax2, color='r')
-    ax2.set(title="Filtered PCG Signal")
-    st.pyplot(fig2)
+    if uploaded_file is not None:
+        st.audio(uploaded_file, format='audio/wav')
 
-    st.subheader("▶️ Play Denoised Audio")
-    buf = BytesIO()
-    sf.write(buf, y_denoised, sr, format='WAV')
-    st.audio(buf.getvalue(), format='audio/wav')
+        # Generate unique ID from file name
+        uid = uploaded_file.name.replace(".", "_")
 
-    # Save waveform with patient info if available
-    if 'patient_id' in st.session_state:
-        audio_path = f"{HISTORY_FOLDER}/{st.session_state['patient_id']}.wav"
-        with open(audio_path, "wb") as f:
-            f.write(buf.getvalue())
+        # Load file
+        audio, sr = librosa.load(uploaded_file, sr=None)
+        st.write("Sample rate:", sr)
+        st.write("Audio duration:", len(audio) / sr, "seconds")
 
-# --- If file uploaded ---
-if uploaded_file:
-    st.audio(uploaded_file, format='audio/wav')
+        # Preprocessing
+        audio = preprocess_audio(audio, sr, uid)
+
+        # Feature extraction
+        mfccs, chroma, contrast = extract_features(audio, sr)
+
+        # Visualizations
+        plot_waveform(audio, sr)
+        plot_spectrogram(audio, sr)
+        plot_mfccs(mfccs)
+
+        # Save and offer download
+        save_processed_audio(audio, sr)
+
+# Streamlit App
+st.title("💡 PCG Audio Feature Analysis using AyuSynk")
+
+st.write("""
+Upload a phonocardiogram (PCG) WAV file recorded via AyuSynk, and this app will process it for
+denoising, amplitude adjustment, and extract audio features like MFCC, Chroma, and Spectrogram.
+""")
+
+uploaded_file = st.file_uploader("📤 Upload your WAV file", type=["wav"], key="file_uploader")
+
+if uploaded_file is not None:
     analyze_audio(uploaded_file)
-
-# --- History Viewer ---
-st.subheader("📁 View Patient History")
-history_files = [f for f in os.listdir(HISTORY_FOLDER) if f.endswith(".json")]
-
-if history_files:
-    selected_case = st.selectbox("Select saved patient", history_files)
-    if selected_case:
-        with open(f"{HISTORY_FOLDER}/{selected_case}") as f:
-            data = json.load(f)
-        st.write("👤 Patient Info")
-        st.write(f"**Name:** {data['name']}")
-        st.write(f"**Age:** {data['age']}")
-        st.write(f"**Gender:** {data['gender']}")
-        st.write(f"**Timestamp:** {data['timestamp']}")
-
-        # Load associated audio
-        audio_file = selected_case.replace(".json", ".wav")
-        audio_path = os.path.join(HISTORY_FOLDER, audio_file)
-        if os.path.exists(audio_path):
-            st.audio(audio_path, format='audio/wav')
-            analyze_audio(audio_path)
-        else:
-            st.warning("No audio file found for this patient.")
-else:
-    st.info("No history yet. Upload and save a new case.")
