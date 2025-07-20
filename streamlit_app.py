@@ -17,7 +17,7 @@ import av
 
 # --- Setup ---
 st.set_page_config(page_title="PCG Realtime Waveform Analyzer", layout="wide")
-st.title("🔬 Real-time PCG Waveform & Noise Reduction")
+st.title("tesing app")
 
 # --- Directories ---
 os.makedirs("data/audio", exist_ok=True)
