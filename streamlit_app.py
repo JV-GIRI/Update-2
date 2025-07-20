@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import librosa
 import librosa.display
 from io import BytesIO
-import soundfile as sf
+import soundfile as sd
 import os
 import json
 from datetime import datetime
