@@ -1,107 +1,130 @@
 import streamlit as st
 import numpy as np
+import scipy.io.wavfile as wav
 import matplotlib.pyplot as plt
-import scipy.signal as signal
 import librosa
+import librosa.display
+from io import BytesIO
+import soundfile as sf
 import os
-import io
 import json
 from datetime import datetime
+import uuid
 
-st.set_page_config(page_title="AI-based RVHD Detection", layout="wide")
+# --- Setup ---
+st.set_page_config(page_title="PCG Realtime Waveform Analyzer", layout="wide")
+st.title("🔬 Real-time PCG Waveform & Noise Reduction")
 
-# -- Load / Save History from a JSON file
-HISTORY_FILE = "patient_history.json"
+# --- Directories ---
+os.makedirs("data/audio", exist_ok=True)
+os.makedirs("data", exist_ok=True)
+HISTORY_FILE = "data/history.json"
 
-def load_history():
+# --- Helper: Save history ---
+def save_history(name, age, gender, filename, timestamp, audio_buffer):
+    history = []
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, "r") as f:
-            return json.load(f)
-    return []
+            history = json.load(f)
 
-def save_history(history):
+    # Generate unique ID for each patient record
+    record_id = str(uuid.uuid4())
+    audio_path = f"data/audio/{record_id}.wav"
+
+    # Save audio to file
+    with open(audio_path, "wb") as f:
+        f.write(audio_buffer.getbuffer())
+
+    # Append new record
+    history.append({
+        "id": record_id,
+        "name": name,
+        "age": age,
+        "gender": gender,
+        "filename": filename,
+        "timestamp": timestamp,
+        "audio_path": audio_path
+    })
+
+    # Save JSON
     with open(HISTORY_FILE, "w") as f:
-        json.dump(history, f, indent=4)
+        json.dump(history, f, indent=2)
 
-# -- Title
-st.title("🫀 AI-based Rheumatic Valvular Heart Disease Detection")
+# --- Sidebar Patient Info ---
+st.sidebar.title("🧑‍⚕️ Patient Information")
+with st.sidebar.form("patient_form"):
+    name = st.text_input("Patient Name")
+    age = st.number_input("Age", min_value=0, max_value=120, step=1)
+    gender = st.selectbox("Gender", ["Male", "Female", "Other"])
+    submit_patient = st.form_submit_button("💾 Save Patient + PCG")
 
-# -- Sidebar for Patient Info
-with st.sidebar:
-    st.header("🧍 Patient Information")
-    patient_name = st.text_input("Name")
-    patient_age = st.number_input("Age", min_value=0, max_value=120, step=1)
-    patient_gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-    patient_notes = st.text_area("Clinical Notes")
-    save_info = st.button("💾 Save Patient Info")
+# --- Upload PCG ---
+uploaded_file = st.file_uploader("📤 Upload a PCG (.wav) file", type=["wav"])
 
-# -- Upload PCG File
-uploaded_file = st.file_uploader("📂 Upload Heart Sound (PCG) File", type=["wav", "mp3", "ogg"])
-
-# -- Infrasonic Recorder Info
-st.markdown("🎙️ Want to use REDVOX app for infrasonic recording? [Learn more](https://www.redvox.io/)")
-
-# -- History View
-st.sidebar.header("📜 Patient History")
-if "history" not in st.session_state:
-    st.session_state["history"] = load_history()
-
-selected_case = st.sidebar.selectbox("Select previous case", [""] + [f"{i+1}. {case['name']} ({case['timestamp']})" 
-                                                for i, case in enumerate(st.session_state["history"])])
-
-if selected_case and selected_case != "":
-    index = int(selected_case.split('.')[0]) - 1
-    selected = st.session_state["history"][index]
-    st.subheader("📝 Previous Patient Details")
-    st.text(f"Name: {selected['name']}")
-    st.text(f"Age: {selected['age']}")
-    st.text(f"Gender: {selected['gender']}")
-    st.text(f"Notes: {selected['notes']}")
-    st.audio(io.BytesIO(bytes.fromhex(selected['audio_data'])), format='audio/wav')
-
-# -- Save Patient Info + PCG
-if uploaded_file and save_info:
-    audio_data = uploaded_file.read()
-    case = {
-        "name": patient_name,
-        "age": patient_age,
-        "gender": patient_gender,
-        "notes": patient_notes,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "audio_data": audio_data.hex()
-    }
-    st.session_state["history"].append(case)
-    save_history(st.session_state["history"])
-    st.success("Patient info & PCG saved to history ✅")
-
-# -- PCG Analysis
+# --- Main Logic ---
 if uploaded_file:
     st.audio(uploaded_file, format='audio/wav')
+
     y, sr = librosa.load(uploaded_file, sr=None)
-    duration = len(y) / sr
 
-    st.subheader("📉 PCG Waveform")
-    # Adjustment controls
-    start_sec = st.slider("Start Time (sec)", 0.0, float(duration), 0.0, step=0.1)
-    end_sec = st.slider("End Time (sec)", 0.0, float(duration), float(duration), step=0.1)
-    amplitude_gain = st.slider("Amplitude Gain", 0.1, 5.0, 1.0, step=0.1)
-
-    start_sample = int(start_sec * sr)
-    end_sample = int(end_sec * sr)
-    y_display = y[start_sample:end_sample] * amplitude_gain
-    t_display = np.linspace(start_sec, end_sec, len(y_display))
-
-    fig, ax = plt.subplots()
-    ax.plot(t_display, y_display)
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Amplitude")
-    ax.set_title("Heart Sound Waveform")
+    # Show original waveform
+    st.subheader("🔈 Original PCG Waveform")
+    fig, ax = plt.subplots(figsize=(10, 3))
+    librosa.display.waveshow(y, sr=sr, ax=ax)
+    ax.set(title="Original PCG Waveform")
     st.pyplot(fig)
 
-    # -- Noise Reduction
-    st.subheader("🧹 Noise Reduction")
-    if st.button("Reduce Noise (Bandpass Filter)"):
-        sos = signal.butter(10, [20, 500], btype='bandpass', fs=sr, output='sos')
-        filtered = signal.sosfilt(sos, y)
-        st.audio(librosa.util.buf_to_float(filtered), format='audio/wav')
-        st.success("Noise reduced successfully!")
+    # --- Controls ---
+    st.subheader("🎚 Waveform Controls")
+    duration = st.slider("Select duration (seconds)", 1, int(len(y) / sr), 5)
+    amplitude_factor = st.slider("Amplitude scaling", 0.1, 5.0, 1.0)
+
+    y_trimmed = y[:sr * duration] * amplitude_factor
+
+    # --- Denoising ---
+    from scipy.signal import butter, filtfilt
+
+    def bandpass_filter(data, sr, lowcut=25.0, highcut=400.0):
+        nyquist = 0.5 * sr
+        low = lowcut / nyquist
+        high = highcut / nyquist
+        b, a = butter(2, [low, high], btype='band')
+        return filtfilt(b, a, data)
+
+    y_denoised = bandpass_filter(y_trimmed, sr)
+
+    # --- Denoised Waveform ---
+    st.subheader("🔇 Denoised Waveform (Bandpass Filtered 25–400 Hz)")
+    fig2, ax2 = plt.subplots(figsize=(10, 3))
+    librosa.display.waveshow(y_denoised, sr=sr, ax=ax2, color='r')
+    ax2.set(title="Filtered PCG Signal")
+    st.pyplot(fig2)
+
+    # --- Denoised Audio Output ---
+    st.subheader("▶️ Play Denoised Audio")
+    buf = BytesIO()
+    sf.write(buf, y_denoised, sr, format='WAV')
+    st.audio(buf.getvalue(), format='audio/wav')
+
+    # Save if form was submitted
+    if submit_patient and name:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_history(name, age, gender, uploaded_file.name, timestamp, buf)
+        st.sidebar.success("✅ Saved successfully!")
+
+# --- HISTORY SECTION ---
+st.sidebar.title("📂 Past Cases")
+if os.path.exists(HISTORY_FILE):
+    with open(HISTORY_FILE, "r") as f:
+        history_data = json.load(f)
+
+    if history_data:
+        case = st.sidebar.selectbox("Select a case to re-analyze", history_data[::-1], format_func=lambda x: f"{x['name']} ({x['timestamp']})")
+        if case:
+            st.markdown("## 📝 Previously Saved Case")
+            st.markdown(f"**Name:** {case['name']}  \n**Age:** {case['age']}  \n**Gender:** {case['gender']}  \n**Timestamp:** {case['timestamp']}")
+
+            st.audio(case["audio_path"], format='audio/wav')
+
+else:
+    st.sidebar.info("No past history available.")
