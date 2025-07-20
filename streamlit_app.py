@@ -39,7 +39,7 @@ def reduce_noise(audio, sr):
     b, a = butter(6, 0.05)
     return lfilter(b, a, audio)
 
-# Save modified audio to temp file for playback
+# Save modified audio to temporary file
 def save_temp_audio(audio_data, sr):
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
     sf.write(temp_file.name, audio_data, sr)
@@ -54,23 +54,22 @@ def analyze_audio(path, unique_id):
 
     st.subheader("🔊 Audio Waveform")
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         amplitude_factor = st.slider("Amplitude scaling", 0.1, 5.0, 1.0, key=f"amp_{unique_id}")
     with col2:
         duration_slider = st.slider("Adjust duration (seconds)", 1, int(len(audio) / sr), 5, key=f"dur_{unique_id}")
+    with col3:
+        amplify_factor = st.slider("Amplify audio", 1.0, 5.0, 1.0, key=f"amplify_{unique_id}")
 
     adjusted_audio = audio[:duration_slider * sr] * amplitude_factor
 
-    # Reduce noise
     if st.button("🧹 Reduce Noise", key=f"noise_{unique_id}"):
         adjusted_audio = reduce_noise(adjusted_audio, sr)
         st.info("Noise reduction applied.")
 
-    # Amplify audio
-    if st.button("🔊 Amplify Audio", key=f"amplify_{unique_id}"):
-        adjusted_audio *= 2.5  # Amplification factor
-        st.info("Audio amplified for better listening.")
+    # Apply amplification
+    adjusted_audio *= amplify_factor
 
     # Plot waveform
     fig, ax = plt.subplots()
@@ -80,7 +79,7 @@ def analyze_audio(path, unique_id):
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-    # Save and play modified audio
+    # Play processed audio
     temp_path = save_temp_audio(adjusted_audio, sr)
     st.audio(temp_path, format="audio/wav")
 
