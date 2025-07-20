@@ -9,63 +9,47 @@ import soundfile as sf
 import os
 import json
 from datetime import datetime
-import uuid
 
-# For mic recording
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, ClientSettings
-import av
-
-# --- Setup ---
 st.set_page_config(page_title="PCG Realtime Waveform Analyzer", layout="wide")
-st.title("tesing app")
+st.title("🔬 Real-time PCG Waveform & Noise Reduction")
 
-# --- Directories ---
-os.makedirs("data/audio", exist_ok=True)
-os.makedirs("data", exist_ok=True)
-HISTORY_FILE = "data/history.json"
+# Folder to save patient cases
+HISTORY_FOLDER = "patient_history"
+os.makedirs(HISTORY_FOLDER, exist_ok=True)
 
-# --- Helper: Save history ---
-def save_history(name, age, gender, filename, timestamp, audio_buffer):
-    history = []
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r") as f:
-            history = json.load(f)
+# --- Sidebar for Patient Information ---
+with st.sidebar:
+    st.header("👤 Add Patient Information")
+    patient_name = st.text_input("Name")
+    patient_age = st.number_input("Age", min_value=0, step=1)
+    patient_gender = st.selectbox("Gender", ["Male", "Female", "Other"])
+    record_button = st.button("💾 Save Patient Details")
 
-    record_id = str(uuid.uuid4())
-    audio_path = f"data/audio/{record_id}.wav"
+    if record_button:
+        if not patient_name:
+            st.warning("Enter patient name.")
+        else:
+            patient_id = f"{patient_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            st.session_state['patient_id'] = patient_id
 
-    with open(audio_path, "wb") as f:
-        f.write(audio_buffer.getbuffer())
+            data = {
+                "name": patient_name,
+                "age": patient_age,
+                "gender": patient_gender,
+                "timestamp": datetime.now().isoformat()
+            }
+            with open(f"{HISTORY_FOLDER}/{patient_id}.json", "w") as f:
+                json.dump(data, f)
+            st.success(f"✅ Saved: {patient_name}")
 
-    history.append({
-        "id": record_id,
-        "name": name,
-        "age": age,
-        "gender": gender,
-        "filename": filename,
-        "timestamp": timestamp,
-        "audio_path": audio_path
-    })
+# --- Upload or Record PCG Audio ---
+st.subheader("📤 Upload or Record PCG (.wav)")
+uploaded_file = st.file_uploader("Choose a PCG file", type=["wav"])
 
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(history, f, indent=2)
-
-# --- Sidebar Patient Info ---
-st.sidebar.title("🧑‍⚕️ Patient Information")
-with st.sidebar.form("patient_form"):
-    name = st.text_input("Patient Name")
-    age = st.number_input("Age", min_value=0, max_value=120, step=1)
-    gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-    submit_patient = st.form_submit_button("💾 Save Patient + PCG")
-
-# --- Upload PCG ---
-uploaded_file = st.file_uploader("📤 Upload a PCG (.wav) file", type=["wav"])
-
-# --- Main Logic for Uploaded File ---
-if uploaded_file:
-    st.audio(uploaded_file, format='audio/wav')
-
-    y, sr = librosa.load(uploaded_file, sr=None)
+# --- PCG Audio Analysis Workflow ---
+def analyze_audio(file_data, sr=None):
+    # Load and show original waveform
+    y, sr = librosa.load(file_data, sr=sr)
 
     st.subheader("🔈 Original PCG Waveform")
     fig, ax = plt.subplots(figsize=(10, 3))
@@ -73,14 +57,15 @@ if uploaded_file:
     ax.set(title="Original PCG Waveform")
     st.pyplot(fig)
 
+    # Controls
     st.subheader("🎚 Waveform Controls")
-    duration = st.slider("Select duration (seconds)", 1, int(len(y) / sr), 5)
+    duration = st.slider("Select duration (seconds)", 1, int(len(y)/sr), 5)
     amplitude_factor = st.slider("Amplitude scaling", 0.1, 5.0, 1.0)
 
     y_trimmed = y[:sr * duration] * amplitude_factor
 
+    # Bandpass filter
     from scipy.signal import butter, filtfilt
-
     def bandpass_filter(data, sr, lowcut=25.0, highcut=400.0):
         nyquist = 0.5 * sr
         low = lowcut / nyquist
@@ -90,7 +75,7 @@ if uploaded_file:
 
     y_denoised = bandpass_filter(y_trimmed, sr)
 
-    st.subheader("🔇 Denoised Waveform (Bandpass Filtered 25–400 Hz)")
+    st.subheader("🔇 Denoised Waveform (25–400 Hz Bandpass)")
     fig2, ax2 = plt.subplots(figsize=(10, 3))
     librosa.display.waveshow(y_denoised, sr=sr, ax=ax2, color='r')
     ax2.set(title="Filtered PCG Signal")
@@ -101,72 +86,39 @@ if uploaded_file:
     sf.write(buf, y_denoised, sr, format='WAV')
     st.audio(buf.getvalue(), format='audio/wav')
 
-    if submit_patient and name:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        save_history(name, age, gender, uploaded_file.name, timestamp, buf)
-        st.sidebar.success("✅ Saved successfully!")
+    # Save waveform with patient info if available
+    if 'patient_id' in st.session_state:
+        audio_path = f"{HISTORY_FOLDER}/{st.session_state['patient_id']}.wav"
+        with open(audio_path, "wb") as f:
+            f.write(buf.getvalue())
 
-# --- HISTORY SECTION ---
-st.sidebar.title("📂 Past Cases")
-if os.path.exists(HISTORY_FILE):
-    with open(HISTORY_FILE, "r") as f:
-        history_data = json.load(f)
+# --- If file uploaded ---
+if uploaded_file:
+    st.audio(uploaded_file, format='audio/wav')
+    analyze_audio(uploaded_file)
 
-    if history_data:
-        case = st.sidebar.selectbox("Select a case to re-analyze", history_data[::-1],
-                                    format_func=lambda x: f"{x['name']} ({x['timestamp']})")
-        if case:
-            st.markdown("## 📝 Previously Saved Case")
-            st.markdown(
-                f"**Name:** {case['name']}  \n**Age:** {case['age']}  \n**Gender:** {case['gender']}  \n**Timestamp:** {case['timestamp']}")
-            st.audio(case["audio_path"], format='audio/wav')
+# --- History Viewer ---
+st.subheader("📁 View Patient History")
+history_files = [f for f in os.listdir(HISTORY_FOLDER) if f.endswith(".json")]
+
+if history_files:
+    selected_case = st.selectbox("Select saved patient", history_files)
+    if selected_case:
+        with open(f"{HISTORY_FOLDER}/{selected_case}") as f:
+            data = json.load(f)
+        st.write("👤 Patient Info")
+        st.write(f"**Name:** {data['name']}")
+        st.write(f"**Age:** {data['age']}")
+        st.write(f"**Gender:** {data['gender']}")
+        st.write(f"**Timestamp:** {data['timestamp']}")
+
+        # Load associated audio
+        audio_file = selected_case.replace(".json", ".wav")
+        audio_path = os.path.join(HISTORY_FOLDER, audio_file)
+        if os.path.exists(audio_path):
+            st.audio(audio_path, format='audio/wav')
+            analyze_audio(audio_path)
+        else:
+            st.warning("No audio file found for this patient.")
 else:
-    st.sidebar.info("No past history available.")
-
-# =========================
-# 🔴 ADDITIONAL FEATURE: RECORD AUDIO
-# =========================
-
-st.markdown("---")
-st.header("🎙️ Record Live PCG using Mic")
-
-class AudioProcessor:
-    def __init__(self):
-        self.frames = []
-
-    def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-        audio = frame.to_ndarray()
-        self.frames.append(audio)
-        return frame
-
-ctx = webrtc_streamer(
-    key="record",
-    mode=WebRtcMode.SENDRECV,
-    in_audio=True,
-    client_settings=ClientSettings(
-        media_stream_constraints={"video": False, "audio": True},
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-    ),
-    audio_receiver_size=1024,
-    video_processor_factory=None,
-    audio_processor_factory=AudioProcessor,
-)
-
-if ctx and ctx.state.playing is False and ctx.audio_processor:
-    audio_data = ctx.audio_processor.frames
-    if len(audio_data) > 0:
-        st.success("✅ Recording finished!")
-
-        full_audio = np.concatenate(audio_data, axis=1).flatten().astype(np.int16)
-
-        temp_file = f"recorded_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
-        with open(temp_file, "wb") as wf:
-            wav.write(wf, 48000, full_audio)
-
-        st.audio(temp_file, format="audio/wav")
-
-        if submit_patient and name:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with open(temp_file, "rb") as f:
-                save_history(name, age, gender, temp_file, timestamp, BytesIO(f.read()))
-            st.sidebar.success("✅ Recorded PCG saved!")
+    st.info("No history yet. Upload and save a new case.")
