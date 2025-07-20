@@ -1,130 +1,123 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-import librosa
-import librosa.display
+import os
+import scipy.io.wavfile as wav
 import soundfile as sf
-import io
-import scipy.signal
-from scipy.io.wavfile import write
-import tempfile
+from scipy.signal import butter, lfilter
+from datetime import datetime
+import json
 
-st.set_page_config(page_title="PCG Audio Feature Analysis", layout="wide")
+st.set_page_config(layout="wide")
 
-def preprocess_audio(audio, sr, uid):
-    st.subheader("Preprocessing")
+st.title("🩺 PCG Analyzer Info")
 
-    # Noise reduction
-    st.write("🔉 Applying noise reduction...")
-    amplitude_factor = st.slider(
-        "Amplitude scaling",
-        0.1, 5.0, 1.0,
-        key=f"amplitude_slider_{uid}"
-    )
-    audio = audio * amplitude_factor
+# Storage folders
+UPLOAD_FOLDER = "uploaded_audios"
+PATIENT_DATA = "patient_data.json"
 
-    noise_threshold = st.slider(
-        "Noise threshold",
-        0.0, 0.1, 0.01,
-        step=0.005,
-        key=f"noise_threshold_slider_{uid}"
-    )
-    audio[np.abs(audio) < noise_threshold] = 0
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-    # Normalization
-    st.write("📏 Normalizing audio...")
-    audio = librosa.util.normalize(audio)
+# Save patient data
+def save_patient_data(data):
+    if os.path.exists(PATIENT_DATA):
+        with open(PATIENT_DATA, "r") as f:
+            existing = json.load(f)
+    else:
+        existing = []
+    existing.append(data)
+    with open(PATIENT_DATA, "w") as f:
+        json.dump(existing, f)
 
-    return audio
+# Load patient data
+def load_patient_data():
+    if os.path.exists(PATIENT_DATA):
+        with open(PATIENT_DATA, "r") as f:
+            return json.load(f)
+    return []
 
-def extract_features(audio, sr):
-    st.subheader("🎼 Feature Extraction")
+# Noise Reduction
+def reduce_noise(audio, sr):
+    b, a = butter(6, 0.05)
+    filtered = lfilter(b, a, audio)
+    return filtered
 
-    st.write("🔍 Extracting MFCCs...")
-    mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)
-    st.write("MFCC shape:", mfccs.shape)
+# Analyze and plot waveform
+def analyze_audio(path, unique_id):
+    sr, audio = wav.read(path)
+    if audio.ndim > 1:
+        audio = audio[:, 0]
 
-    st.write("🎵 Extracting Chroma Features...")
-    chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
-    st.write("Chroma shape:", chroma.shape)
+    st.subheader("🔊 Audio Waveform")
 
-    st.write("⚡ Extracting Spectral Contrast...")
-    contrast = librosa.feature.spectral_contrast(y=audio, sr=sr)
-    st.write("Spectral Contrast shape:", contrast.shape)
+    # Controls
+    col1, col2 = st.columns(2)
+    with col1:
+        amplitude_factor = st.slider("Amplitude scaling", 0.1, 5.0, 1.0, key=f"amp_{unique_id}")
+    with col2:
+        duration_slider = st.slider("Adjust duration (seconds)", 1, int(len(audio) / sr), 5, key=f"dur_{unique_id}")
 
-    return mfccs, chroma, contrast
+    adjusted_audio = audio[:duration_slider * sr] * amplitude_factor
 
-def plot_waveform(audio, sr):
-    st.subheader("📈 Waveform")
+    # Noise reduction option
+    if st.button("🧹 Reduce Noise", key=f"noise_{unique_id}"):
+        adjusted_audio = reduce_noise(adjusted_audio, sr)
+
     fig, ax = plt.subplots()
-    librosa.display.waveshow(audio, sr=sr, ax=ax)
+    times = np.linspace(0, duration_slider, len(adjusted_audio))
+    ax.plot(times, adjusted_audio)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-def plot_spectrogram(audio, sr):
-    st.subheader("🎨 Spectrogram")
-    X = librosa.stft(audio)
-    Xdb = librosa.amplitude_to_db(abs(X))
-    fig, ax = plt.subplots()
-    img = librosa.display.specshow(Xdb, sr=sr, x_axis='time', y_axis='hz', ax=ax)
-    fig.colorbar(img, ax=ax, format="%+2.f dB")
-    st.pyplot(fig)
+    st.audio(path, format="audio/wav")
 
-def plot_mfccs(mfccs):
-    st.subheader("🎚 MFCC")
-    fig, ax = plt.subplots()
-    img = librosa.display.specshow(mfccs, x_axis='time', ax=ax)
-    fig.colorbar(img, ax=ax)
-    st.pyplot(fig)
+# Upload or record audio
+st.sidebar.header("📁 Upload or Record")
 
-def save_processed_audio(audio, sr):
-    st.subheader("💾 Download Processed Audio")
-    buf = io.BytesIO()
-    sf.write(buf, audio, sr, format='WAV')
-    st.download_button(
-        label="Download Processed Audio",
-        data=buf,
-        file_name="processed_audio.wav",
-        mime="audio/wav",
-        key="download_button"
-    )
+upload_file = st.sidebar.file_uploader("Upload WAV File", type=["wav"])
+if upload_file:
+    path = os.path.join(UPLOAD_FOLDER, upload_file.name)
+    with open(path, "wb") as f:
+        f.write(upload_file.getbuffer())
+    st.success("File uploaded successfully!")
+    analyze_audio(path, unique_id=upload_file.name)
 
-def analyze_audio(uploaded_file):
-    st.subheader("🔬 Audio Analysis")
+# Patient info form
+with st.sidebar.expander("🧾 Add Patient Info"):
+    name = st.text_input("Name")
+    age = st.number_input("Age", 1, 120)
+    gender = st.radio("Gender", ["Male", "Female", "Other"])
+    notes = st.text_area("Clinical Notes")
 
-    if uploaded_file is not None:
-        st.audio(uploaded_file, format='audio/wav')
+    if st.button("💾 Save Patient Case"):
+        if upload_file:
+            data = {
+                "name": name,
+                "age": age,
+                "gender": gender,
+                "notes": notes,
+                "file": upload_file.name,
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            save_patient_data(data)
+            st.success("Patient data saved.")
+        else:
+            st.warning("Please upload a PCG file before saving.")
 
-        # Generate unique ID from file name
-        uid = uploaded_file.name.replace(".", "_")
-
-        # Load file
-        audio, sr = librosa.load(uploaded_file, sr=None)
-        st.write("Sample rate:", sr)
-        st.write("Audio duration:", len(audio) / sr, "seconds")
-
-        # Preprocessing
-        audio = preprocess_audio(audio, sr, uid)
-
-        # Feature extraction
-        mfccs, chroma, contrast = extract_features(audio, sr)
-
-        # Visualizations
-        plot_waveform(audio, sr)
-        plot_spectrogram(audio, sr)
-        plot_mfccs(mfccs)
-
-        # Save and offer download
-        save_processed_audio(audio, sr)
-
-# Streamlit App
-st.title("💡 PCG Audio Feature Analysis using AyuSynk")
-
-st.write("""
-Upload a phonocardiogram (PCG) WAV file recorded via AyuSynk, and this app will process it for
-denoising, amplitude adjustment, and extract audio features like MFCC, Chroma, and Spectrogram.
-""")
-
-uploaded_file = st.file_uploader("📤 Upload your WAV file", type=["wav"], key="file_uploader")
-
-if uploaded_file is not None:
-    analyze_audio(uploaded_file)
+# History section
+st.subheader("📚 Case History")
+patient_data = load_patient_data()
+if patient_data:
+    for i, entry in enumerate(patient_data[::-1]):
+        with st.expander(f"{entry['name']} ({entry['age']} y/o) - {entry['date']}"):
+            st.write(f"**Gender:** {entry['gender']}")
+            st.write(f"**Notes:** {entry['notes']}")
+            file_path = os.path.join(UPLOAD_FOLDER, entry["file"])
+            if os.path.exists(file_path):
+                st.audio(file_path, format="audio/wav")
+                analyze_audio(file_path, unique_id=f"history_{i}")
+            else:
+                st.error("Audio file missing.")
+else:
+    st.info("No history records found.")
