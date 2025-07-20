@@ -7,9 +7,10 @@ import soundfile as sf
 from scipy.signal import butter, lfilter
 from datetime import datetime
 import json
+import tempfile
 
 st.set_page_config(layout="wide")
-st.title(" testing ")
+st.title("🩺 PCG Analyzer with History + Patient Info")
 
 # Directories
 UPLOAD_FOLDER = "uploaded_audios"
@@ -38,11 +39,18 @@ def reduce_noise(audio, sr):
     b, a = butter(6, 0.05)
     return lfilter(b, a, audio)
 
+# Save modified audio to temp file for playback
+def save_temp_audio(audio_data, sr):
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    sf.write(temp_file.name, audio_data, sr)
+    return temp_file.name
+
 # Audio analysis
 def analyze_audio(path, unique_id):
     sr, audio = wav.read(path)
     if audio.ndim > 1:
         audio = audio[:, 0]
+    audio = audio.astype(np.float32)
 
     st.subheader("🔊 Audio Waveform")
 
@@ -54,9 +62,17 @@ def analyze_audio(path, unique_id):
 
     adjusted_audio = audio[:duration_slider * sr] * amplitude_factor
 
+    # Reduce noise
     if st.button("🧹 Reduce Noise", key=f"noise_{unique_id}"):
         adjusted_audio = reduce_noise(adjusted_audio, sr)
+        st.info("Noise reduction applied.")
 
+    # Amplify audio
+    if st.button("🔊 Amplify Audio", key=f"amplify_{unique_id}"):
+        adjusted_audio *= 2.5  # Amplification factor
+        st.info("Audio amplified for better listening.")
+
+    # Plot waveform
     fig, ax = plt.subplots()
     times = np.linspace(0, duration_slider, len(adjusted_audio))
     ax.plot(times, adjusted_audio)
@@ -64,7 +80,9 @@ def analyze_audio(path, unique_id):
     ax.set_ylabel("Amplitude")
     st.pyplot(fig)
 
-    st.audio(path, format="audio/wav")
+    # Save and play modified audio
+    temp_path = save_temp_audio(adjusted_audio, sr)
+    st.audio(temp_path, format="audio/wav")
 
 # Upload sidebar
 st.sidebar.header("📁 Upload or Record")
