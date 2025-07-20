@@ -9,7 +9,7 @@ from datetime import datetime
 import json
 
 st.set_page_config(layout="wide")
-st.title("🩺 PCG Analyzer with History + Patient Info")
+st.title(" testing ")
 
 # Directories
 UPLOAD_FOLDER = "uploaded_audios"
