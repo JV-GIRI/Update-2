@@ -9,16 +9,14 @@ from datetime import datetime
 import json
 
 st.set_page_config(layout="wide")
+st.title("🩺 PCG Analyzer with History + Patient Info")
 
-st.title("🩺 PCG Analyzer Info")
-
-# Storage folders
+# Directories
 UPLOAD_FOLDER = "uploaded_audios"
 PATIENT_DATA = "patient_data.json"
-
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Save patient data
+# Load/save patient data
 def save_patient_data(data):
     if os.path.exists(PATIENT_DATA):
         with open(PATIENT_DATA, "r") as f:
@@ -29,20 +27,18 @@ def save_patient_data(data):
     with open(PATIENT_DATA, "w") as f:
         json.dump(existing, f)
 
-# Load patient data
 def load_patient_data():
     if os.path.exists(PATIENT_DATA):
         with open(PATIENT_DATA, "r") as f:
             return json.load(f)
     return []
 
-# Noise Reduction
+# Noise reduction
 def reduce_noise(audio, sr):
     b, a = butter(6, 0.05)
-    filtered = lfilter(b, a, audio)
-    return filtered
+    return lfilter(b, a, audio)
 
-# Analyze and plot waveform
+# Audio analysis
 def analyze_audio(path, unique_id):
     sr, audio = wav.read(path)
     if audio.ndim > 1:
@@ -50,7 +46,6 @@ def analyze_audio(path, unique_id):
 
     st.subheader("🔊 Audio Waveform")
 
-    # Controls
     col1, col2 = st.columns(2)
     with col1:
         amplitude_factor = st.slider("Amplitude scaling", 0.1, 5.0, 1.0, key=f"amp_{unique_id}")
@@ -59,7 +54,6 @@ def analyze_audio(path, unique_id):
 
     adjusted_audio = audio[:duration_slider * sr] * amplitude_factor
 
-    # Noise reduction option
     if st.button("🧹 Reduce Noise", key=f"noise_{unique_id}"):
         adjusted_audio = reduce_noise(adjusted_audio, sr)
 
@@ -72,18 +66,21 @@ def analyze_audio(path, unique_id):
 
     st.audio(path, format="audio/wav")
 
-# Upload or record audio
+# Upload sidebar
 st.sidebar.header("📁 Upload or Record")
-
 upload_file = st.sidebar.file_uploader("Upload WAV File", type=["wav"])
+
 if upload_file:
     path = os.path.join(UPLOAD_FOLDER, upload_file.name)
     with open(path, "wb") as f:
         f.write(upload_file.getbuffer())
     st.success("File uploaded successfully!")
-    analyze_audio(path, unique_id=upload_file.name)
+    st.audio(path, format="audio/wav")  # Preview before analysis
 
-# Patient info form
+# Patient Info
+if "patient_saved" not in st.session_state:
+    st.session_state["patient_saved"] = False
+
 with st.sidebar.expander("🧾 Add Patient Info"):
     name = st.text_input("Name")
     age = st.number_input("Age", 1, 120)
@@ -101,11 +98,16 @@ with st.sidebar.expander("🧾 Add Patient Info"):
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             save_patient_data(data)
-            st.success("Patient data saved.")
+            st.session_state["patient_saved"] = True
+            st.success("Patient data saved. Now analyzing the audio...")
         else:
             st.warning("Please upload a PCG file before saving.")
 
-# History section
+# Perform analysis only after case is saved
+if upload_file and st.session_state["patient_saved"]:
+    analyze_audio(path, unique_id=upload_file.name)
+
+# History
 st.subheader("📚 Case History")
 patient_data = load_patient_data()
 if patient_data:
