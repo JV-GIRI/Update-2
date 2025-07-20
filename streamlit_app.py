@@ -44,7 +44,7 @@ def analyze_audio(path, unique_id):
     if audio.ndim > 1:
         audio = audio[:, 0]
 
-    st.subheader("🔊 Audio Waveform")
+    st.subheader("🔊 PCG analyse")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -54,7 +54,7 @@ def analyze_audio(path, unique_id):
 
     adjusted_audio = audio[:duration_slider * sr] * amplitude_factor
 
-    if st.button("🧹 Reduce Noise", key=f"noise_{unique_id}"):
+    if st.button("🤏🏻 Reduce Noise", key=f"noise_{unique_id}"):
         adjusted_audio = reduce_noise(adjusted_audio, sr)
 
     fig, ax = plt.subplots()
@@ -67,7 +67,7 @@ def analyze_audio(path, unique_id):
     st.audio(path, format="audio/wav")
 
 # Upload sidebar
-st.sidebar.header("📁 Upload or Record")
+st.sidebar.header("📤 Upload or Record")
 upload_file = st.sidebar.file_uploader("Upload WAV File", type=["wav"])
 
 if upload_file:
