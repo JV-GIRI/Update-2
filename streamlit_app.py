@@ -9,7 +9,7 @@ from datetime import datetime
 import json
 
 st.set_page_config(layout="wide")
-st.title("❤️‍🔥 HEARTEST : GIRI'S AI based PCG analyzer")
+st.title("🫀 HEARTEST : GIRI'S AI based PCG analyzer")
 
 # Directories
 UPLOAD_FOLDER = "uploaded_audios"
